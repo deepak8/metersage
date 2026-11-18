@@ -1,0 +1,1 @@
+Provider artwork is loaded from locally installed applications at runtime. No third-party icon assets are distributed with MeterSage. Without a matching app, MeterSage draws an original provider monogram.

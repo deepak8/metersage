@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+.DS_Store
+artifacts/
+*.xcodeproj/xcuserdata/
+*.xcuserstate
+.env
+.env.*
+!.env.example
+*.log
+*.p12
+*.p8
+Sources/MeterSage/Resources/*.icns
