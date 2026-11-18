@@ -67,7 +67,7 @@ swift test
 swift build
 ```
 
-Thirty-six tests cover terminal redraws, independent Claude quota/session timestamps, cached-panel ages, isolated CLI usage probing, and quota grouping, missing/disabled/expired readings, idle Claude cache visibility, report/version validation, zero allowance, numeric metrics, subprocess timeout/cancellation/output limits, sanitization, Codex protocol fixtures, and native menu bar routing. A real Antigravity CLI 1.5.10 read-only report was validated on this machine, returning five measured windows across Gemini Models, Claude/GPT, and Gemini 4 Argon. Generate native preview images without connecting accounts:
+Forty tests cover terminal redraws, independent Claude quota/session timestamps, cached-panel ages, isolated CLI usage probing, and quota grouping, missing/disabled/expired readings, idle Claude cache visibility, report/version validation, zero allowance, numeric metrics, subprocess timeout/cancellation/output limits, sanitization, Codex protocol fixtures, and native menu bar routing. A real Antigravity CLI 1.5.10 read-only report was validated on this machine, returning five measured windows across Gemini Models, Claude/GPT, and Gemini 4 Argon. Generate native preview images without connecting accounts:
 
 ```sh
 .build/debug/MeterSage --snapshot "$PWD/artifacts/dashboard-light.png"
@@ -80,7 +80,7 @@ For a Claude account-only diagnostic (requires official Claude Code sign-in):
 .build/debug/MeterSage --probe-claude
 ```
 
-This prints normalized quotas only. The probe disables tools, hooks, MCP servers, Remote Control startup, and the normal status-line command in its own process. It uses a private temporary workspace, bounds output and runtime, and cleans up its owned process group. CLI startup may register this probe workspace in its own local state. The terminal parser depends on CLI presentation; unexpected layouts produce an error while retaining prior readings. Explicitly cached CLI responses retain their age and suppress alerts; rate limiting or cached results defer further Claude checks for 15 minutes. The bridge is optional and does not need reconfiguration for account allowance updates.
+This prints normalized quotas only. The probe disables tools, hooks, MCP servers, Remote Control startup, and the normal status-line command in its own process. It uses a private temporary workspace, bounds output and runtime, and cleans up its owned process group. CLI startup may register this probe workspace in its own local state. The terminal parser depends on CLI presentation; unexpected layouts produce an error while retaining prior readings. Explicitly cached CLI responses retain their age and suppress alerts. Automatic Claude checks run at least five minutes apart (or at the configured interval when longer). Manual Refresh can retry a cached response after a 30-second debounce. A rate-limit deadline reported by Claude blocks both kinds of checks until that time; an undated rate-limit error uses a 15-minute fallback. Refresh feedback identifies skipped, cached, and failed checks; Session & source details show the check status. The bridge is optional and does not need reconfiguration for account allowance updates.
 
 For an Antigravity-only diagnostic (requires the official CLI's sign-in):
 

@@ -37,6 +37,7 @@ public struct Reading: Codable, Sendable, Identifiable {
     public var observedAt: Date
     public var metricsObservedAt: Date?
     public var quotaIsCached: Bool?
+    public var quotaRetryAfter: Date?
     public var scope: String
     public var limitingQuota: Quota? { quotas.min { $0.remaining < $1.remaining } }
     public func isStale(at now: Date = .now) -> Bool { quotaIsCached == true || now.timeIntervalSince(observedAt) > 900 }

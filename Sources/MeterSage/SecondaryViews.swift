@@ -62,7 +62,7 @@ struct ConnectionView: View {
                         }
                         if provider == .claude {
                             Divider()
-                            Text("Account allowance updates automatically through Claude Code’s /usage command, including usage from Claude Desktop and web on the same account. No CLI message is needed.")
+                            Text("Account allowance updates automatically through Claude Code’s /usage command, including usage from Claude Desktop and web on the same account. No CLI message is needed. Automatic checks are at least five minutes apart; Refresh can retry sooner unless Claude reports a rate limit.")
                                 .font(.callout).foregroundStyle(UtilityTheme.secondary)
                             DisclosureGroup("Optional: context tokens and session cost") {
                                 VStack(alignment: .leading, spacing: 12) {

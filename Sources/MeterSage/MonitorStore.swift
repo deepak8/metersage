@@ -6,7 +6,7 @@ import UsageCore
 
 @MainActor @Observable final class MonitorStore {
     static let shared = MonitorStore()
-    var demo: Bool { didSet { if !demo { Task { await refresh() } } } }
+    var demo: Bool { didSet { if !demo { Task { await refresh(manual: false) } } } }
     var readings: [Reading] = []
     var days: [UsageDay] = []
     var codexHistoryState: DailyHistoryState = .notReported
@@ -18,32 +18,47 @@ import UsageCore
     var refreshMinutes: Int { didSet { defaults.set(refreshMinutes, forKey: "refreshMinutes") } }
     var enabled: Set<Provider> = []
     var lastRefresh: Date?
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private var timer: Timer?
     private var lastNetworkRefresh = Date.distantPast
     private var notified: Set<String> = []
     private var connectionEpoch: [Provider: Int] = [:]
-    private var claudeRetryAfter = Date.distantPast
+    private var claudeRefreshPolicy = ClaudeRefreshPolicy()
+    var claudeRefreshNote: String?
+    var lastRefreshSummary: String?
+    private let clock: @Sendable () -> Date
+    private let claudeReader: @Sendable () async throws -> Reading
 
-    init(startAutomatically: Bool = true) {
+    init(startAutomatically: Bool = true,
+         defaults: UserDefaults = .standard,
+         clock: @escaping @Sendable () -> Date = { .now },
+         claudeReader: @escaping @Sendable () async throws -> Reading = {
+             guard let executable = LocalFiles.executable("claude") else {
+                 throw NSError(domain: "MeterSage", code: 1, userInfo: [NSLocalizedDescriptionKey: "Install the official Claude Code CLI to connect."])
+             }
+             return try await ClaudeUsageProbe.read(executable: executable)
+         }) {
+        self.defaults = defaults
+        self.clock = clock
+        self.claudeReader = claudeReader
         demo = ProcessInfo.processInfo.arguments.contains("--demo")
-        appearance = UserDefaults.standard.string(forKey: "appearance") ?? "system"
-        notifications = UserDefaults.standard.bool(forKey: "notifications")
-        let threshold = UserDefaults.standard.double(forKey: "warningThreshold")
+        appearance = defaults.string(forKey: "appearance") ?? "system"
+        notifications = defaults.bool(forKey: "notifications")
+        let threshold = defaults.double(forKey: "warningThreshold")
         warningThreshold = threshold == 0 ? 20 : threshold
-        refreshMinutes = max(1, UserDefaults.standard.integer(forKey: "refreshMinutes"))
-        if UserDefaults.standard.object(forKey: "refreshMinutes") == nil { refreshMinutes = 5 }
-        enabled = Set((UserDefaults.standard.stringArray(forKey: "enabled") ?? []).compactMap(Provider.init(rawValue:)))
-        notified = Set(UserDefaults.standard.stringArray(forKey: "notifiedWindows") ?? [])
+        refreshMinutes = max(1, defaults.integer(forKey: "refreshMinutes"))
+        if defaults.object(forKey: "refreshMinutes") == nil { refreshMinutes = 5 }
+        enabled = Set((defaults.stringArray(forKey: "enabled") ?? []).compactMap(Provider.init(rawValue:)))
+        notified = Set(defaults.stringArray(forKey: "notifiedWindows") ?? [])
         guard startAutomatically else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, !self.demo else { return }
                 self.refreshClaudeMetrics()
-                if Date().timeIntervalSince(self.lastNetworkRefresh) >= Double(self.refreshMinutes * 60) { await self.refresh() }
+                if Date().timeIntervalSince(self.lastNetworkRefresh) >= Double(self.refreshMinutes * 60) { await self.refresh(manual: false) }
             }
         }
-        if !demo { Task { await refresh() } }
+        if !demo { Task { await refresh(manual: false) } }
     }
     var visibleReadings: [Reading] { demo ? UsageLogic.demo() : readings }
     var visibleDays: [UsageDay] { demo ? UsageLogic.demoHistory() : days }
@@ -71,13 +86,15 @@ import UsageCore
         days.removeAll { $0.provider == provider }
         if provider == .codex { codexHistoryState = .notReported }
         messages[provider] = nil
+        if provider == .claude { claudeRefreshNote = nil; claudeRefreshPolicy = ClaudeRefreshPolicy() }
     }
-    func refresh() async {
+    func refresh(manual: Bool = true) async {
         guard !demo, !refreshing else { return }
         refreshing = true
         defer { refreshing = false; lastRefresh = .now; lastNetworkRefresh = .now }
+        lastRefreshSummary = nil
         refreshClaudeMetrics()
-        async let claude: Void = refreshClaude()
+        async let claude: Void = refreshClaude(manual: manual)
         async let codex: Void = refreshCodex()
         async let antigravity: Void = refreshAntigravity()
         _ = await (claude, codex, antigravity)
@@ -129,29 +146,38 @@ import UsageCore
             readings[index] = readings[index].mergingClaudeMetrics(session)
         } else { readings.append(session) }
     }
-    private func refreshClaude() async {
-        guard enabled.contains(.claude), Date.now >= claudeRetryAfter else { return }
-        let epoch = connectionEpoch[.claude, default: 0]
-        guard let executable = LocalFiles.executable("claude") else {
-            messages[.claude] = "Install the official Claude Code CLI to connect."
+    private func refreshClaude(manual: Bool) async {
+        guard enabled.contains(.claude) else { return }
+        if let until = claudeRefreshPolicy.deferredUntil(manual: manual, now: clock()) {
+            let time = until.formatted(.dateTime.hour().minute().second())
+            claudeRefreshNote = "Claude check deferred until \(time). Displayed usage keeps its original capture time."
+            if manual { lastRefreshSummary = "Claude not checked · retry at \(time)" }
             return
         }
+        let epoch = connectionEpoch[.claude, default: 0]
+        claudeRefreshPolicy.begin(at: clock())
         do {
-            let reading = try await ClaudeUsageProbe.read(executable: executable)
+            let reading = try await claudeReader()
             guard enabled.contains(.claude), !demo, connectionEpoch[.claude, default: 0] == epoch else { return }
+            claudeRefreshPolicy.received(reading, at: clock())
             readings.removeAll { $0.provider == .claude }
             readings.append(reading.mergingClaudeMetrics(LocalFiles.latestClaude()))
+            messages[.claude] = nil
             if reading.quotaIsCached == true {
-                claudeRetryAfter = .now.addingTimeInterval(900)
-                messages[.claude] = "Claude returned last-known usage. Retaining its capture age; checks resume in 15 minutes."
-            } else { messages[.claude] = nil }
+                let next = max(claudeRefreshPolicy.nextAutomaticCheck, claudeRefreshPolicy.rateLimitedUntil ?? .distantPast)
+                claudeRefreshNote = "Claude returned cached usage. Next automatic check: \(next.formatted(date: .omitted, time: .shortened)). Refresh can retry sooner unless Claude is rate limited."
+                lastRefreshSummary = "Claude returned cached usage"
+            } else {
+                claudeRefreshNote = "Checked \(clock().formatted(date: .omitted, time: .shortened)) · automatic checks at least 5 minutes apart."
+            }
             await checkAlerts(reading)
         } catch {
             guard enabled.contains(.claude), !demo, connectionEpoch[.claude, default: 0] == epoch else { return }
+            claudeRefreshPolicy.failed(error, at: clock())
             messages[.claude] = error.localizedDescription
-            if let error = error as? ClaudeUsageError, case .rateLimited = error {
-                claudeRetryAfter = .now.addingTimeInterval(900)
-            }
+            let next = max(claudeRefreshPolicy.nextAutomaticCheck, claudeRefreshPolicy.rateLimitedUntil ?? .distantPast)
+            claudeRefreshNote = "Last check failed. Next automatic check: \(next.formatted(date: .omitted, time: .shortened))."
+            lastRefreshSummary = "Claude refresh failed · see details"
         }
     }
     func requestNotifications() async {

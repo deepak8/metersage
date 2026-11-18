@@ -2,12 +2,14 @@ import Foundation
 
 public enum ClaudeUsageError: LocalizedError {
     case loading, unavailable, authenticationRequired, rateLimited, cachedAgeUnknown, setupRequired
+    case rateLimitedUntil(Date)
     public var errorDescription: String? {
         switch self {
         case .loading: "Claude’s usage panel is still loading. Try Refresh again shortly."
         case .unavailable: "Claude did not return a recognizable subscription usage panel."
         case .authenticationRequired: "Sign in through the official Claude Code CLI, then check the connection."
         case .rateLimited: "Claude’s usage endpoint is rate limited. Keeping the last reading; automatic checks will back off."
+        case .rateLimitedUntil(let date): "Claude’s usage endpoint is rate limited until \(date.formatted(date: .omitted, time: .shortened)). This affects usage reporting, not your permission to chat."
         case .cachedAgeUnknown: "Claude returned cached usage without a readable capture age. Keeping the previous reading."
         case .setupRequired: "Complete Claude Code’s initial setup in Terminal, then retry."
         }
@@ -17,8 +19,13 @@ public enum ClaudeUsageError: LocalizedError {
 public enum ClaudeUsageReport {
     public static func parse(_ text: String, now: Date = .now, timeZone: TimeZone = .current) throws -> Reading {
         let lower = text.lowercased()
+        let rateLimited = lower.contains("rate limited") || lower.contains("usage endpoint is rate") || matches(#"\b429\b"#, lower)
+        let retryAt = retryAfter(in: text, now: now, timeZone: timeZone)
         if lower.contains("showing last-known usage") == false,
-           lower.contains("rate limited") || lower.contains("usage endpoint is rate") { throw ClaudeUsageError.rateLimited }
+           rateLimited {
+            if let retryAt { throw ClaudeUsageError.rateLimitedUntil(retryAt) }
+            throw ClaudeUsageError.rateLimited
+        }
         if lower.contains("sign in to") || lower.contains("not logged in") || lower.contains("please log in") { throw ClaudeUsageError.authenticationRequired }
         if lower.contains("refreshing…") || lower.contains("refreshing...") || lower.contains("loading usage") { throw ClaudeUsageError.loading }
         var observed = now
@@ -72,8 +79,24 @@ public enum ClaudeUsageReport {
             else { quotas.append(quota) }
         }
         guard !quotas.isEmpty else { throw ClaudeUsageError.unavailable }
-        return Reading(provider: .claude, quotas: quotas, observedAt: observed,
-                       quotaIsCached: cached, scope: "Account allowance · official Claude Code /usage")
+        var reading = Reading(provider: .claude, quotas: quotas, observedAt: observed,
+                              quotaIsCached: cached, scope: "Account allowance · official Claude Code /usage")
+        reading.quotaRetryAfter = retryAt ?? (rateLimited ? now.addingTimeInterval(900) : nil)
+        return reading
+    }
+
+    public static func retryAfter(in text: String, now: Date, timeZone: TimeZone) -> Date? {
+        guard let match = first(#"(?i)rate\s+limited\s+until\s+(\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))(?:\s*(\([^\)]+\)))?"#, text) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: match[2].trimmingCharacters(in: CharacterSet(charactersIn: "()"))) ?? timeZone
+        let raw = match[1].replacingOccurrences(of: " ", with: "").lowercased()
+        let numbers = raw.replacingOccurrences(of: "am", with: "").replacingOccurrences(of: "pm", with: "").split(separator: ":")
+        guard let hour = Int(numbers[0]), hour < 24 else { return nil }
+        let minute = numbers.count > 1 ? Int(numbers[1]) ?? -1 : 0
+        guard (0...59).contains(minute) else { return nil }
+        if raw.hasSuffix("am") || raw.hasSuffix("pm"), !(1...12).contains(hour) { return nil }
+        let adjusted = raw.hasSuffix("pm") ? hour % 12 + 12 : (raw.hasSuffix("am") ? hour % 12 : hour)
+        return calendar.nextDate(after: now, matching: DateComponents(hour: adjusted, minute: minute, second: 0), matchingPolicy: .nextTime)
     }
 
     public static func parseReset(_ text: String, now: Date, timeZone: TimeZone) -> Date? {

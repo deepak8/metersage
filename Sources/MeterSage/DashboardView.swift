@@ -25,7 +25,7 @@ struct DashboardView: View {
             await store.refresh()
             let health = ProviderHealth(enabled: store.enabled, readings: store.visibleReadings,
                                         messages: store.messages, refreshing: false)
-            refreshFeedback = health.status == .healthy ? "Allowances updated" : health.text
+            refreshFeedback = store.lastRefreshSummary ?? (health.status == .healthy ? "Allowances updated" : health.text)
             feedbackTask = Task {
                 try? await Task.sleep(for: .seconds(4))
                 guard !Task.isCancelled else { return }
@@ -52,6 +52,7 @@ struct DashboardView: View {
                     ForEach(Provider.allCases) { provider in
                         ProviderCard(provider: provider, reading: store.reading(provider),
                                      message: store.demo ? nil : store.messages[provider],
+                                     refreshNote: store.demo || provider != .claude ? nil : store.claudeRefreshNote,
                                      threshold: store.warningThreshold,
                                      connect: { activeSheet = .connection(provider) },
                                      disconnect: { store.disconnect(provider) })
@@ -157,6 +158,7 @@ struct ProviderCard: View {
     let provider: Provider
     let reading: Reading?
     let message: String?
+    var refreshNote: String? = nil
     let threshold: Double
     let connect: () -> Void
     let disconnect: () -> Void
@@ -213,6 +215,7 @@ struct ProviderCard: View {
                     }.font(.callout)
                 }
                 DisclosureGroup(provider == .claude ? "Session & source details" : "Usage details") {
+                    if let refreshNote { Text(refreshNote).font(.caption).foregroundStyle(UtilityTheme.secondary) }
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(Array((reading.unavailableQuotas ?? []).enumerated()), id: \.offset) { _, label in
                             Label(label + ": Unavailable", systemImage: "questionmark.circle")
