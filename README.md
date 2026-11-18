@@ -4,6 +4,14 @@ Your AI allowances, at a glance.
 
 A native macOS menu bar utility for Codex, Claude Code, and Google Antigravity. Built with SwiftUI and Swift Charts. The approved visual direction is Quiet Utility Minimalism: solid cool surfaces, muted blue allowance meters, native controls, and explicit light/dark tokens. See [DESIGN.md](DESIGN.md) for the canonical design system. Provider icons are read from locally installed applications; original letter marks are used when those apps are absent.
 
+## Screenshots
+
+Light and dark appearances, shown with illustrative demo data.
+
+| Light | Dark |
+| --- | --- |
+| <img src="docs/screenshots/dashboard-light.png" alt="MeterSage in light mode, showing Codex, Claude, and Antigravity five-hour and weekly allowances" width="320"> | <img src="docs/screenshots/dashboard-dark.png" alt="MeterSage in dark mode, showing provider allowances and a low Claude allowance warning" width="320"> |
+
 ## Build and open
 
 Requires macOS 14+ and Xcode with the Swift 6.2 toolchain. No third-party Swift packages are required.
